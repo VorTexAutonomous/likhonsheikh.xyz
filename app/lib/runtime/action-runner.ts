@@ -1,6 +1,6 @@
-import { WebContainer } from '@webcontainer/api';
 import { map, type MapStore } from 'nanostores';
 import * as nodePath from 'node:path';
+import type { SandpackClient } from '@codesandbox/sandpack-client';
 import type { BoltAction } from '~/types/actions';
 import { createScopedLogger } from '~/utils/logger';
 import { unreachable } from '~/utils/unreachable';
@@ -34,13 +34,13 @@ export type ActionStateUpdate =
 type ActionsMap = MapStore<Record<string, ActionState>>;
 
 export class ActionRunner {
-  #webcontainer: Promise<WebContainer>;
+  #sandpackClient: Promise<SandpackClient>;
   #currentExecutionPromise: Promise<void> = Promise.resolve();
 
   actions: ActionsMap = map({});
 
-  constructor(webcontainerPromise: Promise<WebContainer>) {
-    this.#webcontainer = webcontainerPromise;
+  constructor(sandpackClient: Promise<SandpackClient>) {
+    this.#sandpackClient = sandpackClient;
   }
 
   addAction(data: ActionCallbackData) {
@@ -126,27 +126,21 @@ export class ActionRunner {
       unreachable('Expected shell action');
     }
 
-    const webcontainer = await this.#webcontainer;
+    const client = await this.#sandpackClient;
 
-    const process = await webcontainer.spawn('jsh', ['-c', action.content], {
-      env: { npm_config_yes: true },
-    });
-
-    action.abortSignal.addEventListener('abort', () => {
-      process.kill();
-    });
-
-    process.output.pipeTo(
-      new WritableStream({
-        write(data) {
-          console.log(data);
-        },
-      }),
-    );
-
-    const exitCode = await process.exit;
-
-    logger.debug(`Process terminated with code ${exitCode}`);
+    try {
+      // Sandpack's `dispatch` method is used for shell commands.
+      // Aborting a command might require a custom implementation
+      // or relying on Sandpack's internal command handling.
+      // For now, we'll execute the command and log its output.
+      await client.dispatch({ type: 'command', command: action.content } as any);
+      logger.debug(`Sandpack command executed: ${action.content}`);
+      // You might want to capture and log the output from `result` if available
+      // SandpackClient's `listen` method in TerminalStore will capture console output.
+    } catch (error) {
+      logger.error(`Failed to run Sandpack command: ${action.content}\n\n`, error);
+      throw error; // Re-throw to be caught by the action runner's error handling
+    }
   }
 
   async #runFileAction(action: ActionState) {
@@ -154,27 +148,16 @@ export class ActionRunner {
       unreachable('Expected file action');
     }
 
-    const webcontainer = await this.#webcontainer;
+    const client = await this.#sandpackClient;
 
-    let folder = nodePath.dirname(action.filePath);
-
-    // remove trailing slashes
-    folder = folder.replace(/\/+$/g, '');
-
-    if (folder !== '.') {
-      try {
-        await webcontainer.fs.mkdir(folder, { recursive: true });
-        logger.debug('Created folder', folder);
-      } catch (error) {
-        logger.error('Failed to create folder\n\n', error);
-      }
-    }
-
+    // Sandpack's `updateSandbox` handles creating directories if they don't exist.
+    // We just need to provide the full file path and content.
     try {
-      await webcontainer.fs.writeFile(action.filePath, action.content);
-      logger.debug(`File written ${action.filePath}`);
+      await client.updateSandbox({ files: { [action.filePath]: { code: action.content } } });
+      logger.debug(`File written to Sandpack: ${action.filePath}`);
     } catch (error) {
-      logger.error('Failed to write file\n\n', error);
+      logger.error(`Failed to write file to Sandpack: ${action.filePath}\n\n`, error);
+      throw error; // Re-throw to be caught by the action runner's error handling
     }
   }
 

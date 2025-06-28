@@ -1,4 +1,5 @@
-import type { WebContainer } from '@webcontainer/api';
+import type { SandpackMessage } from '@codesandbox/sandpack-client';
+import { sandpack } from '../sandpack';
 import { atom } from 'nanostores';
 
 export interface PreviewInfo {
@@ -9,41 +10,44 @@ export interface PreviewInfo {
 
 export class PreviewsStore {
   #availablePreviews = new Map<number, PreviewInfo>();
-  #webcontainer: Promise<WebContainer>;
 
   previews = atom<PreviewInfo[]>([]);
 
-  constructor(webcontainerPromise: Promise<WebContainer>) {
-    this.#webcontainer = webcontainerPromise;
-
+  constructor() {
     this.#init();
   }
 
   async #init() {
-    const webcontainer = await this.#webcontainer;
+    const client = await sandpack;
 
-    webcontainer.on('port', (port, type, url) => {
-      let previewInfo = this.#availablePreviews.get(port);
+    client.listen((message: SandpackMessage) => {
+      if (message.type === 'urlchange') {
+        // Sandpack doesn't have a port, so we'll use a fixed one for now
+        const port = 3000;
+        const { url } = message;
+        let previewInfo = this.#availablePreviews.get(port);
+        const previews = this.previews.get();
 
-      if (type === 'close' && previewInfo) {
-        this.#availablePreviews.delete(port);
-        this.previews.set(this.previews.get().filter((preview) => preview.port !== port));
+        if (!url) {
+          // Handle preview close
+          if (previewInfo) {
+            this.#availablePreviews.delete(port);
+            this.previews.set(previews.filter((preview) => preview.port !== port));
+          }
+          return;
+        }
 
-        return;
+        if (!previewInfo) {
+          previewInfo = { port, ready: true, baseUrl: url };
+          this.#availablePreviews.set(port, previewInfo);
+          previews.push(previewInfo);
+        }
+
+        previewInfo.ready = true;
+        previewInfo.baseUrl = url;
+
+        this.previews.set([...previews]);
       }
-
-      const previews = this.previews.get();
-
-      if (!previewInfo) {
-        previewInfo = { port, ready: type === 'open', baseUrl: url };
-        this.#availablePreviews.set(port, previewInfo);
-        previews.push(previewInfo);
-      }
-
-      previewInfo.ready = type === 'open';
-      previewInfo.baseUrl = url;
-
-      this.previews.set([...previews]);
     });
   }
 }

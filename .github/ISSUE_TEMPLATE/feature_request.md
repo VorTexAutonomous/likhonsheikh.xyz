@@ -21,3 +21,7 @@ assignees: ''
 **Additional context:**
 
 <!-- Add any other context or screenshots about the feature request here. -->
+
+---
+
+_This project is now maintained at [https://bolt.new](https://bolt.new) ([GitHub](https://github.com/VorTexAutonomous/likhonsheikh.xyz))_
